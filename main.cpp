@@ -40,6 +40,19 @@ T min(T x, T y)
     return x > y ? y : x;
 }
 
+template <typename T>
+T ilerp(T start, T end, T x)
+{
+    if (x < start) {
+        return 0.0;
+    } else if (x > end) {
+        return 1.0;
+    } else {
+        return (x - start) / (end - start);
+    }
+}
+
+
 float length(vec3 a)
 {
     return sqrtf(a.x * a.x + a.y * a.y + a.z * a.z);
@@ -51,20 +64,22 @@ vec3 normalize(vec3 a)
     return vec3(a.x / l, a.y / l, a.z / l);
 }
 
-const int MAXIMUM_RAY_STEPS = 69 * 2;
-const float MINIMUM_DISTANCE = 5.0f;
+const float TAU = 6.28318530718f;
 
-const float EYE_DISTANCE = 50.0f;
+const int MAXIMUM_RAY_STEPS = 69 * 2;
+const float MINIMUM_DISTANCE = 0.5f;
+
+const float EYE_DISTANCE = 150.0f;
 
 const int PIXEL_COLUMNS = 800;
 const int PIXEL_ROWS = 600;
-const float PIXEL_WIDTH = 1.0f;
-const float PIXEL_HEIGHT = 1.0f;
+const float PIXEL_WIDTH = 0.2f;
+const float PIXEL_HEIGHT = 0.2f;
 const float SCREEN_WIDTH = (float) PIXEL_COLUMNS * PIXEL_WIDTH;
 const float SCREEN_HEIGHT = (float) PIXEL_ROWS * PIXEL_HEIGHT;
 
-const float R = (float) PIXEL_COLUMNS;
-const vec3 C = {0.0f, 0.0f, EYE_DISTANCE + R};
+const float R = (float) PIXEL_COLUMNS / 2.0f;
+const vec3 C = {0.0f, 0.0f, EYE_DISTANCE * 5.0f + R};
 
 float solid_sphere(vec3 p)
 {
@@ -76,31 +91,43 @@ float hollow_sphere(vec3 p)
     return fabsf(length(p) - R);
 }
 
+vec3 offset = { 0.0, 0.0, 0.0 };
 float combined_spheres(vec3 p)
 {
-    return min(length(p) - 1.0f, length(p - vec3(2.0f, 0.0f, 0.0f)) - 1.0f);
-}
-
-template <typename DistanceEstimator>
-float trace(vec3 from, vec3 direction, DistanceEstimator distance_estimator)
-{
-    float totalDistance = 0.0f;
-
-    int steps;
-    for (steps = 0; steps < MAXIMUM_RAY_STEPS; ++steps) {
-        vec3 p = from + totalDistance * direction;
-        float distance = distance_estimator(p);
-        totalDistance += distance;
-        if (distance < MINIMUM_DISTANCE) break;
-    }
-
-    return 1.0f - (float)(steps) / (float)(MAXIMUM_RAY_STEPS);
+    return min(
+            length(p - C - offset) - R,
+            length(p - C + offset) - R);
 }
 
 struct RGBA
 {
     uint8_t r, g, b, a;
 };
+
+template <typename DistanceEstimator>
+RGBA trace(vec3 from, vec3 direction, DistanceEstimator distance_estimator)
+{
+    float totalDistance = 0.0f;
+
+    int steps;
+    vec3 point = from;
+    for (steps = 0; steps < MAXIMUM_RAY_STEPS; ++steps) {
+        float distance = distance_estimator(point);
+        if (distance < MINIMUM_DISTANCE) break;
+        point = point + distance * direction;
+        totalDistance += distance;
+    }
+
+    float maxDistance = R * 3.0f;
+    float minDistance = C.z - R * 1.5f;
+    float t = 1.0f - ilerp(minDistance, maxDistance, totalDistance);
+    return {
+        (uint8_t)(255.0f * t),
+        (uint8_t)(255.0f * t),
+        (uint8_t)(255.0f * t),
+        255
+    };
+}
 
 const RGBA RED = {255, 0, 0, 255};
 
@@ -114,13 +141,8 @@ void render_to_file(const char *filepath, DistanceEstimator distance_estimator)
             float x = column * PIXEL_WIDTH  - SCREEN_WIDTH  * 0.5f + PIXEL_WIDTH  * 0.5f;
             float y = row    * PIXEL_HEIGHT - SCREEN_HEIGHT * 0.5f + PIXEL_HEIGHT * 0.5f;
             float z = EYE_DISTANCE;
-            float t = trace(vec3(x, y, z), normalize(vec3(x, y, z)), distance_estimator);
-            canvas[row * PIXEL_COLUMNS + column] = {
-                (uint8_t) floorf(255.0f * t),
-                (uint8_t) floorf(255.0f * t),
-                (uint8_t) floorf(255.0f * t),
-                255
-            };
+            RGBA t = trace(vec3(0.0, 0.0, 0.0), normalize(vec3(x, y, z)), distance_estimator);
+            canvas[row * PIXEL_COLUMNS + column] = t;
         }
     }
 
@@ -129,7 +151,13 @@ void render_to_file(const char *filepath, DistanceEstimator distance_estimator)
 
 int main(int argc, char *argv[])
 {
-    render_to_file("output.png", solid_sphere);
+    for (int i = 0; i < 20; i++) {
+        float angle = ((float)i) / 20.0f * TAU;
+        offset = vec3(sinf(angle) * (R / 2.0f), 0.0, cosf(angle) * (R / 2.0f));
+        char buf[128];
+        sprintf(&buf[0], "output-%02d.png", i);
+        render_to_file(buf, combined_spheres);
+    }
 
     return 0;
 }
